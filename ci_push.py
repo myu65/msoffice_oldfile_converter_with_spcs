@@ -20,9 +20,12 @@ ci_push.py
 import argparse
 import os
 import shlex
+import shutil
 import socket
 import subprocess
 import sys
+import tempfile
+from pathlib import PurePosixPath
 
 
 # -------------------- utils --------------------
@@ -93,12 +96,45 @@ def put_spec(stage: str, local_spec_path: str, dest_path: str, connection: str |
     if not os.path.exists(abs_spec):
         print(f"[ERROR] spec ファイルが見つかりません: {abs_spec}", file=sys.stderr)
         sys.exit(3)
-    target = stage.rstrip("/") + "/" + dest_path.lstrip("/")
-    sql = f"PUT file://{abs_spec} {target} AUTO_COMPRESS=FALSE OVERWRITE=TRUE;"
+
+    # remote への配置先を計算（Snowflake の PUT は指定したパス以下に元ファイル名で配置される）
+    dest_norm = dest_path.replace("\\", "/").strip("/")
+    remote_dir = ""
+    remote_name = os.path.basename(abs_spec)
+
+    if dest_norm:
+        if dest_norm.endswith("/"):
+            remote_dir = dest_norm.rstrip("/")
+        else:
+            last_segment = dest_norm.split("/")[-1]
+            if "." in last_segment:
+                pp = PurePosixPath(dest_norm)
+                remote_dir = "" if pp.parent == PurePosixPath(".") else pp.parent.as_posix()
+                remote_name = pp.name
+            else:
+                remote_dir = dest_norm
+
+    target = stage.rstrip("/")
+    if remote_dir:
+        target += "/" + remote_dir
+
+    tmp_dir = None
+    src_for_put = abs_spec
+    if remote_name != os.path.basename(abs_spec):
+        tmp_dir = tempfile.TemporaryDirectory()
+        renamed = os.path.join(tmp_dir.name, remote_name)
+        shutil.copy2(abs_spec, renamed)
+        src_for_put = renamed
+
+    sql = f"PUT file://{src_for_put} {target} AUTO_COMPRESS=FALSE OVERWRITE=TRUE;"
     cmd = ["snow", "sql", "-q", sql]
     if connection:
         cmd += ["--connection", connection]
-    run(cmd)
+    try:
+        run(cmd)
+    finally:
+        if tmp_dir is not None:
+            tmp_dir.cleanup()
 
 
 # -------------------- docker ops --------------------
@@ -127,42 +163,54 @@ def docker_tag_push(local_ref: str, host: str, db: str, schema: str, repo: str, 
 
 # -------------------- main --------------------
 def main():
-    ensure("snow")
-    ensure("docker")
-
     ap = argparse.ArgumentParser(description="Build/Push Docker image to Snowflake SIR (+ optional PUT spec)")
-    ap.add_argument("--repo", required=True, help="DB.SCHEMA.REPO")
+    ap.add_argument("--repo", help="DB.SCHEMA.REPO")
     ap.add_argument("--image", default="lo-convert")
     ap.add_argument("--tag", default="latest")
     ap.add_argument("--build", action="store_true")
-    ap.add_argument("--dockerfile", default="Dockerfile")
+    # repo 内のファイル名は小文字なのでデフォルトも揃える
+    ap.add_argument("--dockerfile", default="dockerfile")
     ap.add_argument("--context", default=".")
     ap.add_argument("--put-spec", action="store_true")
     ap.add_argument("--spec-path", default="specs/lo_convert.yaml")
     ap.add_argument("--stage", default="@DOC_STAGE")
     ap.add_argument("--spec-dest", default="specs/lo_convert.yaml")
     ap.add_argument("--connection", help="snow CLI connection 名（例: XVRALMC-UX32060）")
+    ap.add_argument("--skip-image", action="store_true",
+                    help="イメージの login/build/push をスキップ (spec だけ更新したい場合に利用)")
     args = ap.parse_args()
 
+    ensure("snow")
+    if not args.skip_image:
+        ensure("docker")
+
     # 1) Docker レジストリログイン（接続プロファイル使用）
-    spcs_registry_login(args.connection)
+    if not args.skip_image:
+        if not args.repo:
+            print("[ERROR] --repo は DB.SCHEMA.REPO 形式で指定してください。", file=sys.stderr)
+            sys.exit(2)
 
-    # 2) 正しいレジストリホスト（URL）を CLI から取得
-    host = get_registry_host(args.connection)
-    print(f"[INFO] registry host: {host}")
+        spcs_registry_login(args.connection)
 
-    # 3) イメージリポジトリ作成（無ければ）
-    db, schema, repo = parse_repo(args.repo)
-    create_image_repo(repo, db, schema, args.connection)
+        # 2) 正しいレジストリホスト（URL）を CLI から取得
+        host = get_registry_host(args.connection)
+        print(f"[INFO] registry host: {host}")
 
-    # 4) ビルド（必要なら）
-    local_ref = f"{args.image}:{args.tag}"
-    if args.build:
-        docker_build(local_ref, args.dockerfile, args.context)
+        # 3) イメージリポジトリ作成（無ければ）
+        db, schema, repo = parse_repo(args.repo)
+        create_image_repo(repo, db, schema, args.connection)
 
-    # 5) tag & push（host/path を小文字に正規化）
-    remote_ref = docker_tag_push(local_ref, host, db, schema, repo, args.image, args.tag)
-    print(f"[INFO] pushed: {remote_ref}")
+        # 4) ビルド（必要なら）
+        local_ref = f"{args.image}:{args.tag}"
+        if args.build:
+            docker_build(local_ref, args.dockerfile, args.context)
+
+        # 5) tag & push（host/path を小文字に正規化）
+        remote_ref = docker_tag_push(local_ref, host, db, schema, repo, args.image, args.tag)
+        print(f"[INFO] pushed: {remote_ref}")
+    else:
+        if args.repo:
+            print("[WARN] --skip-image 指定時は --repo は無視されます。", file=sys.stderr)
 
     # 6) spec をステージに PUT（任意）
     if args.put_spec:
