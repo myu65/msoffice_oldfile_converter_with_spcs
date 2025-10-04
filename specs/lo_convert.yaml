@@ -1,0 +1,28 @@
+spec:
+  containers:
+    - name: lo-convert
+      image: xvralmc-ux32060.registry.snowflakecomputing.com/snowflake_learning_db/data_test/doc_tools/lo-convert:latest
+      command:
+        - "python3"
+        - "/usr/local/bin/convert.py"
+        - "--inputs"
+        - "/in/**/*"
+        - "--out-dir"
+        - "/out"
+        - "--passthrough-modern"
+        - "--calc-fit-export"
+        - "--also-pdf"
+      volumeMounts:
+        - name: in
+          mountPath: /in
+        - name: out
+          mountPath: /out
+      resources:
+        requests:
+          cpu: 1
+          memory: 2Gi
+  volumes:
+    - name: in
+      source: "@DOC_STAGE/raw"
+    - name: out
+      source: "@DOC_STAGE/convert/out"

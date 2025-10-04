@@ -1,0 +1,9 @@
+[project]
+name = "old-office-converter"
+version = "0.1.0"
+description = "Old type MS-OFFICE files to convert"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "snowflake-cli>=3.12.0",
+]
