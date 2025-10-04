@@ -65,6 +65,31 @@ docker run --rm \
   - `raw/` : 入力ファイルを置く
   - `convert/out/` : 出力先 (Job で out ボリュームとしてマウント)
 
+### Snow CLI の connection.toml 設定
+`snow` CLI v2 の接続情報は `~/.snowflake/connection.toml` に保存します。`ci_push.py` や `ci_spcs.py` の `--connection YOUR_CONNECTION` オプションで指定する名前と合わせて、以下のようにプロファイルを作成してください。
+
+```toml
+[connections.YOUR_CONNECTION]
+account = "xxxxxx-xy12345"
+user = "YOUR_USER"
+role = "YOUR_ROLE"
+warehouse = "YOUR_WH"
+database = "SNOWFLAKE_LEARNING_DB"
+schema = "DATA_TEST"
+authenticator = "SNOWFLAKE"
+```
+
+データベースとスキーマも適当です。トライアルアカウントに適当につくっています。
+
+キー認証を使う場合は、同じセクションに `private_key_path` と `private_key_passphrase` (必要であれば) を追記します。例:
+
+```toml
+private_key_path = "/home/you/.snowflake/rsa_key.p8"
+private_key_passphrase = "env:SNOWFLAKE_PRIVATE_KEY_PASSPHRASE"
+```
+
+設定後に `snow connection list` や `snow sql -q "SELECT 1" --connection YOUR_CONNECTION` で疎通を確認しておくと安心です。
+
 ### 1. イメージをビルド & push
 ```bash
 uv run python ci_push.py \
@@ -121,6 +146,8 @@ uv run python ci_spcs.py logs \
 
 - 自動生成されたジョブ名を使う場合は、`job` 実行時のログに表示された名前を指定してください
 - Job 実行時と同じ `--database` / `--schema` を指定すると、ログ取得前に適切なコンテキストへ切り替わります
+
+たぶん、JOB動いてる間しか見れない。
 
 ## 開発メモ
 - `dockerfile` は `ja_JP.UTF-8` ロケールと Noto CJK フォントを設定しているので日本語文書でも文字化けしにくい
