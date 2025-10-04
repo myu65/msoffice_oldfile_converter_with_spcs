@@ -73,7 +73,7 @@ uv run python ci_push.py \
   --build \
   --put-spec --spec-path specs/lo_convert.yaml \
   --stage @DOC_STAGE --spec-dest specs/lo_convert.yaml \
-  --connection XVRALMC-UX32060
+  --connection YOUR_CONNECTION
 ```
 - 既存イメージを使い spec だけ差し替えるときは `--skip-image` を付けて実行
 - Snowflake CLI の connection プロファイル名は環境に合わせて調整
@@ -86,7 +86,7 @@ uv run python ci_spcs.py pool \
   --name LO_POOL_XS \
   --size XS \
   --min-nodes 1 --max-nodes 1 \
-  --connection XVRALMC-UX32060
+  --connection YOUR_CONNECTION
 ```
 既存のプールを使う場合はこのステップ不要です。
 
@@ -99,7 +99,7 @@ uv run python ci_spcs.py job \
   --database SNOWFLAKE_LEARNING_DB \
   --schema DATA_TEST \
   --sync \
-  --connection XVRALMC-UX32060
+  --connection YOUR_CONNECTION
 ```
 - `--spec` にローカルのテンプレートを渡すと、ジョブ名 + タイムスタンプ + ランダム ID 付きの spec が毎回ステージに PUT されます
 - PUT 先は `@DOC_STAGE/<spec パス>` なので、テンプレートをサブディレクトリに置くとその構造が反映されます（例: `specs/lo_convert.yaml` → `@DOC_STAGE/specs/...`）
@@ -108,6 +108,7 @@ uv run python ci_spcs.py job \
 - `--sync` を外すと非同期実行
 - 実行後、出力はステージ `@DOC_STAGE/convert/out/` に保存されます
 
+
 ### 4. ログ確認
 ```bash
 uv run python ci_spcs.py logs \
@@ -115,7 +116,7 @@ uv run python ci_spcs.py logs \
   --container lo \
   --database SNOWFLAKE_LEARNING_DB \
   --schema DATA_TEST \
-  --connection XVRALMC-UX32060
+  --connection YOUR_CONNECTION
 ```
 
 - 自動生成されたジョブ名を使う場合は、`job` 実行時のログに表示された名前を指定してください
