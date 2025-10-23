@@ -146,8 +146,64 @@ uv run python ci_spcs.py logs \
 
 - 自動生成されたジョブ名を使う場合は、`job` 実行時のログに表示された名前を指定してください
 - Job 実行時と同じ `--database` / `--schema` を指定すると、ログ取得前に適切なコンテキストへ切り替わります
+- LibreOffice 変換ジョブは `--container lo`、olmOCR ジョブは `--container olmocr` を指定してください
 
 たぶん、JOB動いてる間しか見れない。
+
+### olmOCR Markdown OCR ジョブ (新規)
+
+GPU を含む Compute Pool で [alleninstituteforai/olmocr](https://hub.docker.com/r/alleninstituteforai/olmocr) イメージをそのまま動かして PDF を Markdown に変換する SPCS ジョブ用 spec (`specs/olmocr.yaml`) を追加しました。既存の LibreOffice 変換ジョブとは完全に独立しています。
+
+#### イメージのビルド & プッシュ
+- `dockerfile.olmocr` で公式 Docker イメージに SPCS 向けエントリポイントを追加しています
+- 例:
+  ```bash
+  uv run python ci_push.py \
+    --repo SNOWFLAKE_LEARNING_DB.DATA_TEST.DOC_TOOLS \
+    --image olmocr --tag latest \
+    --dockerfile dockerfile.olmocr \
+    --context . \
+    --build \
+    --put-spec --spec-path specs/olmocr.yaml \
+    --stage @DOC_STAGE --spec-dest specs/olmocr.yaml \
+    --connection YOUR_CONNECTION
+  ```
+  `--skip-image` を付ければ spec だけ更新可能です
+
+#### モデルのステージ配置
+- `ci_ocr_model.py` で Hugging Face からダウンロードし Snowflake stage へ PUT できます
+  ```bash
+  export HF_TOKEN=...  # 必要な場合
+  uv run python ci_ocr_model.py \
+    --model allenai/olmOCR-2-7B-1025-FP8 \
+    --stage @DOC_MODEL_STAGE/olmocr \
+    --connection YOUR_CONNECTION
+  ```
+- 既に展開済みのディレクトリを使う場合は `--local-dir /path/to/dir` を指定
+- Stage 上では `@DOC_MODEL_STAGE/olmocr/<モデル名>/...` の形で配置され、spec の `OCR_MODEL_SUBDIR` と連動します
+
+#### ステージ構成
+- `@DOC_STAGE/ocr/in/` : 入力 PDF/画像 (`.pdf/.png/.jpg/.jpeg`)
+- `@DOC_STAGE/ocr/workspace/` : ワークスペース（`markdown/` 以下に出力 md）
+- `@DOC_MODEL_STAGE/olmocr/<モデル名>/` : モデルファイル群
+- spec 内の `OCR_MODEL_SUBDIR` で使用するモデルディレクトリ名、`OCR_WORKERS` で並列度を調整できます（追加引数は `OCR_EXTRA_ARGS` へスペース区切りで指定）
+
+#### ジョブ実行手順
+- GPU 対応の Compute Pool を作成（例：`GPU_NV_S` ファミリー相当）
+- 入力 PDF を `@DOC_STAGE/ocr/in/` に配置（サブディレクトリも可）
+- ジョブ実行:
+  ```bash
+  uv run python ci_spcs.py job \
+    --pool <GPU_POOL_NAME> \
+    --stage @DOC_STAGE \
+    --spec specs/olmocr.yaml \
+    --database SNOWFLAKE_LEARNING_DB \
+    --schema DATA_TEST \
+    --connection YOUR_CONNECTION \
+    --sync
+  ```
+
+成功すると `@DOC_STAGE/ocr/workspace/markdown/` に入力ファイルと同じ相対パスで Markdown が並びます。`input_files.txt` が空だった場合はジョブ側で安全に終了します。ログ取得時は `--container olmocr` を指定してください。
 
 ## 開発メモ
 - `dockerfile` は `ja_JP.UTF-8` ロケールと Noto CJK フォントを設定しているので日本語文書でも文字化けしにくい

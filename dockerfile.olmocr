@@ -1,0 +1,19 @@
+FROM alleninstituteforai/olmocr:0.4.2
+
+ENV HF_HUB_OFFLINE=1 \
+    TRANSFORMERS_OFFLINE=1 \
+    OCR_INPUT_DIR=/in \
+    OCR_WORKSPACE_DIR=/workspace \
+    OCR_MODEL_DIR=/models \
+    TORCH_HOME=/workspace/.cache/torch
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends findutils && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+RUN mkdir -p /workspace/.cache/torch
+
+COPY ocr_entrypoint.sh /usr/local/bin/ocr-entrypoint.sh
+RUN chmod +x /usr/local/bin/ocr-entrypoint.sh
+
+ENTRYPOINT ["/usr/local/bin/ocr-entrypoint.sh"]

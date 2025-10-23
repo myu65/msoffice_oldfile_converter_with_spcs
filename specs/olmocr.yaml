@@ -1,0 +1,32 @@
+spec:
+  containers:
+    - name: olmocr
+      image: xvralmc-ux32060.registry.snowflakecomputing.com/snowflake_learning_db/data_test/doc_tools/olmocr:latest
+      env:
+        HF_HUB_OFFLINE: "1"
+        TRANSFORMERS_OFFLINE: "1"
+        TORCH_HOME: "/workspace/.cache/torch"
+        OCR_MODEL_SUBDIR: "olmOCR-2-7B-1025-FP8"
+        OCR_WORKERS: "4"
+      volumeMounts:
+        - name: pdfs
+          mountPath: /in
+        - name: workspace
+          mountPath: /workspace
+        - name: models
+          mountPath: /models
+      resources:
+        requests:
+          cpu: 6
+          memory: 26Gi
+          nvidia.com/gpu: 1
+        limits:
+          nvidia.com/gpu: 1
+
+  volumes:
+    - name: pdfs
+      source: "@DOC_STAGE/ocr/in"
+    - name: workspace
+      source: "@DOC_STAGE/ocr/workspace"
+    - name: models
+      source: "@DOC_MODEL_STAGE/olmocr"
