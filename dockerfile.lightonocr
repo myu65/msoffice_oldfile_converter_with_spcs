@@ -1,0 +1,34 @@
+FROM vllm/vllm-openai:nightly
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      python3-pip python3-venv \
+      libjpeg-dev zlib1g-dev libpng-dev libfreetype6-dev \
+      liblcms2-dev libopenjp2-7 libtiff5 libwebp-dev && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+RUN python3 -m pip install --upgrade pip && \
+    python3 -m pip install --no-cache-dir \
+      "pypdfium2==4.25.0" \
+      "pillow==10.4.0" \
+      "requests>=2.32.3" \
+      "pyarrow==16.1.0"
+
+COPY lightonocr_pipeline.py /usr/local/bin/lightonocr_pipeline.py
+COPY lightonocr_entrypoint.sh /usr/local/bin/lightonocr_entrypoint.sh
+
+RUN chmod +x /usr/local/bin/lightonocr_entrypoint.sh
+
+ENV OCR_INPUT_DIR=/in \
+    OCR_OUTPUT_DIR=/out \
+    OCR_WORKSPACE_DIR=/workspace \
+    OCR_MODEL_DIR=/models \
+    HF_HUB_OFFLINE=1 \
+    TRANSFORMERS_OFFLINE=1 \
+    TORCH_HOME=/workspace/.cache/torch
+
+RUN mkdir -p /workspace/.cache/torch
+
+ENTRYPOINT ["/usr/local/bin/lightonocr_entrypoint.sh"]

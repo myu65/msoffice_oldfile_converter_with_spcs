@@ -1,0 +1,38 @@
+spec:
+  containers:
+    - name: lightonocr
+      image: xvralmc-ux32060.registry.snowflakecomputing.com/snowflake_learning_db/data_test/doc_tools/lightonocr:latest
+      env:
+        HF_HUB_OFFLINE: "1"
+        TRANSFORMERS_OFFLINE: "1"
+        TORCH_HOME: "/workspace/.cache/torch"
+        OCR_MODEL_SUBDIR: "LightOnOCR-1B-1025"
+        OCR_TENSOR_PARALLEL: "4"
+        OCR_PARQUET_NAME: "lightonocr_output.parquet"
+        OCR_EMIT_MARKDOWN: "1"
+        OCR_MAX_OUTPUT_TOKENS: "3500"
+        OCR_PAGE_SCALE: "2.0"
+        OCR_MAX_MODEL_LEN: "8192"
+        OCR_MAX_BATCH_TOKENS: "8192"
+      volumeMounts:
+        - name: pdfs
+          mountPath: /in
+        - name: models
+          mountPath: /models
+        - name: output
+          mountPath: /out
+      resources:
+        requests:
+          cpu: 6
+          memory: 26Gi
+          nvidia.com/gpu: 1
+        limits:
+          nvidia.com/gpu: 1
+
+  volumes:
+    - name: pdfs
+      source: "@DOC_STAGE/ocr/in"
+    - name: output
+      source: "@DOC_STAGE/ocr/out"
+    - name: models
+      source: "@DOC_MODEL_STAGE/lightonocr"

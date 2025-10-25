@@ -80,42 +80,65 @@ def upload_directory(root: Path, stage: str, dest_prefix: str, connection: str |
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Download olmOCR model and upload to Snowflake stage")
+    parser = argparse.ArgumentParser(
+        description="Download a Hugging Face OCR model snapshot and optionally upload it to a Snowflake stage"
+    )
     parser.add_argument("--model", default="allenai/olmOCR-2-7B-1025-FP8", help="Hugging Face repo id")
     parser.add_argument("--revision", default=None, help="Specific revision/tag/commit to download")
-    parser.add_argument("--stage", default="@DOC_MODEL_STAGE/olmocr", help="Snowflake stage (and optional prefix) to upload into")
-    parser.add_argument("--dest-prefix", default=None, help="Destination directory name on stage (defaults to model repo base name)")
+    parser.add_argument("--stage", help="Snowflake stage (and optional prefix) to upload into")
+    parser.add_argument("--dest-prefix", default=None, help="Destination directory on stage (defaults to model repo base name)")
     parser.add_argument("--connection", help="snow CLI connection name")
-    parser.add_argument("--local-dir", help="Skip download and use existing directory")
+    parser.add_argument("--local-dir", help="Directory to place or reuse the downloaded snapshot")
+    parser.add_argument("--skip-download", action="store_true", help="Reuse contents of --local-dir without downloading")
+    parser.add_argument("--no-upload", action="store_true", help="Skip uploading to Snowflake (download only)")
     parser.add_argument("--overwrite", action="store_true", help="Pass OVERWRITE=TRUE to PUT commands")
     parser.add_argument("--keep-download", action="store_true", help="Keep downloaded snapshot (in temp dir by default)")
     args = parser.parse_args()
 
-    ensure("snow")
+    if args.skip_download and not args.local_dir:
+        parser.error("--skip-download requires --local-dir")
+
+    if args.no_upload and args.stage:
+        print("[WARN] --no-upload specified; --stage will be ignored.", file=sys.stderr)
+
+    if not args.no_upload:
+        if not args.stage:
+            parser.error("--stage is required unless --no-upload is set")
+        ensure("snow")
+
+    download_root: Path
+    temp_dir_for_cleanup: Path | None = None
 
     if args.local_dir:
-        root_dir = Path(args.local_dir).resolve()
-        if not root_dir.is_dir():
-            print(f"[ERROR] --local-dir がディレクトリではありません: {root_dir}", file=sys.stderr)
+        download_root = Path(args.local_dir).resolve()
+        if download_root.exists() and not download_root.is_dir():
+            print(f"[ERROR] --local-dir がディレクトリではありません: {download_root}", file=sys.stderr)
             sys.exit(2)
+        download_root.mkdir(parents=True, exist_ok=True)
     else:
-        temp_dir_path = Path(tempfile.mkdtemp(prefix="olmocr_model_"))
-        print(f"[INFO] Downloading model {args.model} -> {temp_dir_path}")
+        download_root = Path(tempfile.mkdtemp(prefix="ocr_model_"))
+        temp_dir_for_cleanup = download_root
+
+    if not args.skip_download:
+        print(f"[INFO] Downloading model {args.model} -> {download_root}")
         snapshot_download(
             repo_id=args.model,
             revision=args.revision,
-            local_dir=temp_dir_path,
+            local_dir=download_root,
             local_dir_use_symlinks=False,
         )
-        root_dir = temp_dir_path
-
-    temp_dir_for_cleanup = None if args.local_dir else root_dir
+    else:
+        print(f"[INFO] Skipping download and reusing {download_root}")
 
     dest_prefix = args.dest_prefix or infer_dest(args.model)
-    print(f"[INFO] Upload destination: {args.stage.rstrip('/')}/{dest_prefix}")
+    if not args.no_upload:
+        print(f"[INFO] Upload destination: {args.stage.rstrip('/')}/{dest_prefix}")
 
     try:
-        upload_directory(root_dir, args.stage, dest_prefix, args.connection, args.overwrite)
+        if not args.no_upload:
+            upload_directory(download_root, args.stage, dest_prefix, args.connection, args.overwrite)
+        else:
+            print("[INFO] Download-only mode; no upload performed.")
     finally:
         if temp_dir_for_cleanup is not None:
             if args.keep_download:

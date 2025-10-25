@@ -181,6 +181,7 @@ GPU を含む Compute Pool で [alleninstituteforai/olmocr](https://hub.docker.c
   ```
 - 既に展開済みのディレクトリを使う場合は `--local-dir /path/to/dir` を指定
 - Stage 上では `@DOC_MODEL_STAGE/olmocr/<モデル名>/...` の形で配置され、spec の `OCR_MODEL_SUBDIR` と連動します
+  - ローカルにダウンロードだけ行いたい場合は `--no-upload` を付けると Snowflake への PUT をスキップできます（`--skip-download` で既存ディレクトリをそのまま使うことも可能）
 
 #### ステージ構成
 - `@DOC_STAGE/ocr/in/` : 入力 PDF/画像 (`.pdf/.png/.jpg/.jpeg`)
@@ -204,6 +205,72 @@ GPU を含む Compute Pool で [alleninstituteforai/olmocr](https://hub.docker.c
   ```
 
 成功すると `@DOC_STAGE/ocr/workspace/markdown/` に入力ファイルと同じ相対パスで Markdown が並びます。`input_files.txt` が空だった場合はジョブ側で安全に終了します。ログ取得時は `--container olmocr` を指定してください。
+
+### LightOnOCR Markdown OCR (新規)
+
+LightOnAI の LightOnOCR モデルを使って PDF を Markdown に変換し、出力を Parquet 形式でまとめるジョブです。olmOCR と同様に GPU プールが必要です。
+
+#### モデルのステージ配置
+- LightOnOCR の重みをステージへ配置する際は `ci_ocr_model.py` の `--model` / `--stage` を差し替えます。
+  ```bash
+  export HF_TOKEN=...  # 必要な場合
+  uv run python ci_ocr_model.py \
+    --model LightOnAI/LightOnOCR-1B-1025 \
+    --stage @DOC_MODEL_STAGE/lightonocr \
+    --connection YOUR_CONNECTION
+  ```
+  ステージ上では `@DOC_MODEL_STAGE/lightonocr/LightOnOCR-1B-1025/...` のように配置されます。
+  ローカル検証用にモデルだけ取得したいときは `--no-upload --local-dir ./models/LightOnOCR-1B-1025` のように実行してください（既存ディレクトリを再利用する場合は `--skip-download` を追加）。
+
+#### ステージ構成
+- `@DOC_STAGE/lightonocr/in/` : 入力 PDF
+- `@DOC_STAGE/lightonocr/workspace/` : 中間成果物（Markdown ファイルなど）
+- `@DOC_STAGE/lightonocr/out/` : Parquet 出力 (`lightonocr_output.parquet`)
+- `@DOC_MODEL_STAGE/lightonocr/` : LightOnOCR モデルファイル
+
+#### イメージのビルド & プッシュ
+```bash
+uv run python ci_push.py \
+  --repo SNOWFLAKE_LEARNING_DB.DATA_TEST.DOC_TOOLS \
+  --image lightonocr --tag latest \
+  --dockerfile dockerfile.lightonocr \
+  --context . \
+  --build \
+  --put-spec --spec-path specs/lightonocr.yaml \
+  --stage @DOC_STAGE --spec-dest specs/lightonocr.yaml \
+  --connection YOUR_CONNECTION
+```
+
+#### ジョブ実行
+```bash
+uv run python ci_spcs.py job \
+  --pool <GPU_POOL_NAME> \
+  --stage @DOC_STAGE \
+  --spec specs/lightonocr.yaml \
+  --database SNOWFLAKE_LEARNING_DB \
+  --schema DATA_TEST \
+  --connection YOUR_CONNECTION \
+  --sync
+```
+
+実行後、`@DOC_STAGE/lightonocr/out/lightonocr_output.parquet` に 1 行 1 PDF の Markdown が格納されます（カラム: `source_path`, `page_count`, `markdown`, `page_markdown`, `model_name`, `generated_at`, `error`）。Markdown ファイル群も `@DOC_STAGE/lightonocr/workspace/markdown/` に生成されるため、必要に応じてダウンロードして確認できます。ログ取得時は `--container lightonocr` を指定してください。
+
+#### ローカルテスト (GPU 環境)
+モデルをローカルパス `./models/LightOnOCR-1B-1025` に展開済みと仮定して Docker コンテナを実行する例:
+```bash
+docker run --rm --gpus all \
+  -v "$(pwd)/in:/in" \
+  -v "$(pwd)/out:/out" \
+  -v "$(pwd)/workspace:/workspace" \
+  -v "$(pwd)/models:/models" \
+  -e OCR_MAX_MODEL_LEN=8192 \
+  -e OCR_MAX_BATCH_TOKENS=8192 \
+  lightonocr:local
+```
+`OCR_MAX_BATCH_TOKENS` は `OCR_MAX_MODEL_LEN` 以上になるよう設定してください（デフォルトでは自動的に同じ値になります）。
+WSL2 などで GPU を渡す場合は `/usr/lib/wsl/lib` にある CUDA ドライバを優先するようエントリポイントが `LD_LIBRARY_PATH` を自動調整します。値を上書きする場合も同ディレクトリを含めてください。
+# End Patch
+GPU を検出できない環境（例: WSL 上で NVIDIA ドライバ未設定）では `-e OCR_DEVICE=cpu` を追加すると CPU モードで起動しますが、推論時間が大幅に延びる点に注意してください。
 
 ## 開発メモ
 - `dockerfile` は `ja_JP.UTF-8` ロケールと Noto CJK フォントを設定しているので日本語文書でも文字化けしにくい
