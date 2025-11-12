@@ -1,0 +1,45 @@
+FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      python3 python3-pip python3-venv \
+      git \
+      libglib2.0-0 libgl1 libsm6 libxrender1 libxext6 \
+      libjpeg-turbo8 libpng16-16 libfreetype6 \
+      libtiff5 libgomp1 libgfortran5 \
+      poppler-utils \
+      fonts-noto-cjk && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN python3 -m pip install --upgrade pip
+
+ARG TORCH_VERSION=2.5.1
+ARG TORCHVISION_VERSION=0.20.1
+ARG PYTORCH_INDEX=https://download.pytorch.org/whl/cu124
+
+RUN python3 -m pip install --no-cache-dir \
+      --index-url ${PYTORCH_INDEX} \
+      --extra-index-url https://pypi.org/simple \
+      torch==${TORCH_VERSION} \
+      torchvision==${TORCHVISION_VERSION}
+
+RUN python3 -m pip install --no-cache-dir yomitoku==0.10.1
+
+ENV YOMITOKU_INPUT_DIR=/in \
+    YOMITOKU_OUTPUT_DIR=/out \
+    YOMITOKU_WORKSPACE_DIR=/workspace \
+    YOMITOKU_MODEL_DIR=/models \
+    HF_HUB_OFFLINE=1 \
+    TRANSFORMERS_OFFLINE=1 \
+    TORCH_HOME=/workspace/.cache/torch
+
+RUN mkdir -p /in /out /workspace /models /workspace/.cache/torch
+
+COPY yomitoku_entrypoint.sh /usr/local/bin/yomitoku_entrypoint.sh
+RUN chmod +x /usr/local/bin/yomitoku_entrypoint.sh
+
+ENTRYPOINT ["/usr/local/bin/yomitoku_entrypoint.sh"]

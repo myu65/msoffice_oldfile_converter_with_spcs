@@ -83,7 +83,15 @@ def main():
     parser = argparse.ArgumentParser(
         description="Download a Hugging Face OCR model snapshot and optionally upload it to a Snowflake stage"
     )
-    parser.add_argument("--model", default="allenai/olmOCR-2-7B-1025-FP8", help="Hugging Face repo id")
+    parser.add_argument(
+        "--model",
+        dest="models",
+        action="append",
+        help=(
+            "Hugging Face repo id. Repeat the flag to download/upload multiple models in one run. "
+            "Defaults to allenai/olmOCR-2-7B-1025-FP8 when omitted."
+        ),
+    )
     parser.add_argument("--revision", default=None, help="Specific revision/tag/commit to download")
     parser.add_argument("--stage", help="Snowflake stage (and optional prefix) to upload into")
     parser.add_argument("--dest-prefix", default=None, help="Destination directory on stage (defaults to model repo base name)")
@@ -95,8 +103,17 @@ def main():
     parser.add_argument("--keep-download", action="store_true", help="Keep downloaded snapshot (in temp dir by default)")
     args = parser.parse_args()
 
+    default_model = "allenai/olmOCR-2-7B-1025-FP8"
+    models = args.models or [default_model]
+
     if args.skip_download and not args.local_dir:
         parser.error("--skip-download requires --local-dir")
+    if args.dest_prefix and len(models) > 1:
+        parser.error("--dest-prefix can only be used when a single --model is specified")
+    if args.local_dir and len(models) > 1:
+        parser.error("--local-dir can only be combined with a single --model value")
+    if args.skip_download and len(models) > 1:
+        parser.error("--skip-download can only be combined with a single --model value")
 
     if args.no_upload and args.stage:
         print("[WARN] --no-upload specified; --stage will be ignored.", file=sys.stderr)
@@ -106,45 +123,45 @@ def main():
             parser.error("--stage is required unless --no-upload is set")
         ensure("snow")
 
-    download_root: Path
-    temp_dir_for_cleanup: Path | None = None
-
-    if args.local_dir:
-        download_root = Path(args.local_dir).resolve()
-        if download_root.exists() and not download_root.is_dir():
-            print(f"[ERROR] --local-dir がディレクトリではありません: {download_root}", file=sys.stderr)
-            sys.exit(2)
-        download_root.mkdir(parents=True, exist_ok=True)
-    else:
-        download_root = Path(tempfile.mkdtemp(prefix="ocr_model_"))
-        temp_dir_for_cleanup = download_root
-
-    if not args.skip_download:
-        print(f"[INFO] Downloading model {args.model} -> {download_root}")
-        snapshot_download(
-            repo_id=args.model,
-            revision=args.revision,
-            local_dir=download_root,
-            local_dir_use_symlinks=False,
-        )
-    else:
-        print(f"[INFO] Skipping download and reusing {download_root}")
-
-    dest_prefix = args.dest_prefix or infer_dest(args.model)
-    if not args.no_upload:
-        print(f"[INFO] Upload destination: {args.stage.rstrip('/')}/{dest_prefix}")
+    cleanup_targets: list[Path] = []
 
     try:
-        if not args.no_upload:
-            upload_directory(download_root, args.stage, dest_prefix, args.connection, args.overwrite)
-        else:
-            print("[INFO] Download-only mode; no upload performed.")
-    finally:
-        if temp_dir_for_cleanup is not None:
-            if args.keep_download:
-                print(f"[INFO] Download retained at {temp_dir_for_cleanup}")
+        for repo_id in models:
+            if args.local_dir:
+                download_root = Path(args.local_dir).resolve()
+                if download_root.exists() and not download_root.is_dir():
+                    print(f"[ERROR] --local-dir がディレクトリではありません: {download_root}", file=sys.stderr)
+                    sys.exit(2)
+                download_root.mkdir(parents=True, exist_ok=True)
             else:
-                shutil.rmtree(temp_dir_for_cleanup, ignore_errors=True)
+                download_root = Path(tempfile.mkdtemp(prefix=f"ocr_model_{infer_dest(repo_id)}_"))
+                cleanup_targets.append(download_root)
+
+            if not args.skip_download:
+                print(f"[INFO] Downloading model {repo_id} -> {download_root}")
+                snapshot_download(
+                    repo_id=repo_id,
+                    revision=args.revision,
+                    local_dir=download_root,
+                    local_dir_use_symlinks=False,
+                )
+            else:
+                print(f"[INFO] Skipping download for {repo_id} and reusing {download_root}")
+
+            dest_prefix = args.dest_prefix or infer_dest(repo_id)
+            if not args.no_upload:
+                print(f"[INFO] Upload destination: {args.stage.rstrip('/')}/{dest_prefix}")
+                upload_directory(download_root, args.stage, dest_prefix, args.connection, args.overwrite)
+            else:
+                print("[INFO] Download-only mode; no upload performed.")
+    finally:
+        if cleanup_targets:
+            if args.keep_download:
+                for retained in cleanup_targets:
+                    print(f"[INFO] Download retained at {retained}")
+            else:
+                for target in cleanup_targets:
+                    shutil.rmtree(target, ignore_errors=True)
 
 
 if __name__ == "__main__":
