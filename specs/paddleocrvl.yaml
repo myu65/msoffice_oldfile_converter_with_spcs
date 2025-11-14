@@ -1,0 +1,51 @@
+spec:
+  containers:
+    - name: paddleocrvl
+      image: xvralmc-ux32060.registry.snowflakecomputing.com/snowflake_learning_db/data_test/doc_tools/paddleocrvl:latest
+      env:
+        PADDLEOCRVL_INPUT_DIR: "/in"
+        PADDLEOCRVL_OUTPUT_DIR: "/out"
+        PADDLEOCRVL_WORKSPACE_DIR: "/workspace"
+        PADDLEOCRVL_PARQUET_NAME: "paddleocrvl_output.parquet"
+        PADDLEOCRVL_EMIT_MARKDOWN: "1"
+        PADDLEOCRVL_MARKDOWN_SUBDIR: "markdown"
+        PADDLEOCRVL_MODEL_NAME: "PaddleOCR-VL-0.9B"
+        PADDLEOCRVL_PIPELINE_NAME: "PaddleOCR-VL"
+        PADDLEOCRVL_PRETTY_MARKDOWN: "1"
+        PADDLEOCRVL_SHOW_FORMULA_NUMBER: "0"
+        PADDLEOCRVL_MIN_PIXELS: "64"
+        PADDLEOCRVL_MAX_PIXELS: "1536"
+        PADDLEOCRVL_TEMPERATURE: "0.0"
+        PADDLEOCRVL_TOP_P: "0.95"
+        PADDLEOCRVL_REPETITION_PENALTY: "1.0"
+        PADDLEOCRVL_USE_DOC_ORIENTATION: "0"
+        PADDLEOCRVL_USE_DOC_UNWARPING: "0"
+        PADDLEOCRVL_DISABLE_LAYOUT_DETECTION: "0"
+        PADDLEOCRVL_VERBOSE: "0"
+        PADDLEOCRVL_PADDLEX_HOME: "/models/.paddlex"
+      volumeMounts:
+        - name: inputs
+          mountPath: /in
+        - name: outputs
+          mountPath: /out
+        - name: workspace
+          mountPath: /workspace
+        - name: models
+          mountPath: /models
+      resources:
+        requests:
+          cpu: 6
+          memory: 26Gi
+          nvidia.com/gpu: 1
+        limits:
+          nvidia.com/gpu: 1
+
+  volumes:
+    - name: inputs
+      source: "@DOC_STAGE/yomitoku/in"
+    - name: outputs
+      source: "@DOC_STAGE/paddleocrvl/out"
+    - name: workspace
+      source: "@DOC_STAGE/paddleocrvl/workspace"
+    - name: models
+      source: "@DOC_MODEL_STAGE/paddleocrvl"

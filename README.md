@@ -326,6 +326,74 @@ uv run python ci_spcs.py job \
 - 追加の CLI オプションは `YOMITOKU_EXTRA_ARGS`（例: `"--pages 1-3 --ignore_meta"`）に半角スペース区切りで渡せます。
 - 生成された Markdown/HTML/JSON は `@DOC_STAGE/yomitoku/out/`、図や可視化画像は `@DOC_STAGE/yomitoku/workspace/figures/` に保存されます。ログ取得時は `ci_spcs.py logs --container yomitoku ...` を指定してください。
 
+### PaddleOCR-VL Markdown OCR (新規)
+
+[PaddleOCR-VL](https://github.com/PaddlePaddle/PaddleOCR) の Vision-Language Document Parser をそのまま使い、PDF やスキャン画像を GitHub-Flavored Markdown と Parquet へ書き出す SPCS ジョブです。PaddleOCR-VL が生成する `markdown_texts` / `markdown_images` を結合し、ページ順コメントを残しつつ 1 ファイル 1 Markdown で保存します。
+
+#### モデルのステージ配置
+- `ci_paddleocrvl_models.py` で PaddleOCR-VL の公式モデルを自動ダウンロードし、Snowflake Stage へ PUT できます。事前に PaddlePaddle 3.2.1 系と PaddleOCR 3.1.0 を入れてください（例: GPU 環境なら `paddlepaddle-gpu==3.2.1` を `https://www.paddlepaddle.org.cn/packages/stable/cu126/` から取得し、`pip install "paddleocr[doc]==3.1.0" pillow snowflake-cli` を実行）。
+  ```bash
+  uv run python ci_paddleocrvl_models.py \
+    --stage @DOC_MODEL_STAGE/paddleocrvl \
+    --connection YOUR_CONNECTION \
+    --dest-prefix .paddlex \
+    --local-dir ./models/paddlex_cache \
+    --overwrite
+  ```
+  - `--local-dir` を省略すると一時ディレクトリに展開し、完了後に削除します（`--keep-download` で保持可）。
+  - 既に `.paddlex` ディレクトリを持っている場合は `--skip-download --local-dir path/to/cache` を指定し、アップロードのみを実行できます。
+  - `--no-upload` を付ければローカルに `.paddlex` を生成するだけのモードになります。
+  - PaddleX が `PADDLEX_HOME` を無視して `~/.paddlex` 以下へ直接展開する環境でも、スクリプト側で実ディレクトリを自動検出してそのまま Stage へ PUT するため、手動コピーは不要です。
+- 手動で取得したい場合は次の通り `PADDLEX_HOME` を設定し、`paddleocr.PaddleOCRVL` を一度呼び出してから `.paddlex` ディレクトリをステージへ PUT すれば同じ構成になります。
+  ```bash
+  export PADDLEX_HOME="$(pwd)/models/paddlex_home/.paddlex"
+  mkdir -p "${PADDLEX_HOME}"
+  python3 - <<'PY'
+from paddleocr import PaddleOCRVL
+ocr = PaddleOCRVL()
+ocr.predict("docs/paddleocr_vl_example.pdf")
+PY
+  snow sql -q "PUT file://$(pwd)/models/paddlex_home/.paddlex @DOC_MODEL_STAGE/paddleocrvl AUTO_COMPRESS=FALSE OVERWRITE=TRUE;"
+  ```
+
+#### ステージ構成
+- `@DOC_STAGE/paddleocrvl/in/` : 入力 PDF/画像 (`pdf/png/jpg/jpeg/bmp/tif/tiff`)
+- `@DOC_STAGE/paddleocrvl/workspace/markdown/` : 結合済み Markdown (`入力相対パス + .md`)
+- `@DOC_STAGE/paddleocrvl/out/paddleocrvl_output.parquet` : 1 行 1 ファイルのメタデータ
+- `@DOC_MODEL_STAGE/paddleocrvl/.paddlex/official_models/...` : PaddleOCR-VL の各サブモデル
+- `.paddlex` 直下には `official_models/` だけでなく `pipelines/PaddleOCR-VL/*.yaml` などの設定ファイルも必要です。`ci_paddleocrvl_models.py` は `.paddlex` 丸ごとを PUT するので、既存 Stage に Official Models だけをコピーした場合は再アップロードしてください。
+- エントリポイントは `/models/.paddlex` 内を検証し、`PP-DocLayoutV2`（レイアウト検出モデル）やパイプライン設定が見つからない場合には即終了します。`PADDLEOCRVL_DISABLE_LAYOUT_DETECTION=1` を明示しない限り、Stage が欠けているまま処理を進めることはありません。
+- safetensors の公式リリースには Paddle 用 backend がまだ含まれていないため、Dockerfile では Baidu 提供の `safetensors-0.6.2.dev0-cp38-abi3-linux_x86_64.whl` を追加でインストールしています。ローカル検証でも同じホイールを入れるか、`pip install -U https://paddle-whl.bj.bcebos.com/nightly/cu126/safetensors/safetensors-0.6.2.dev0-cp38-abi3-linux_x86_64.whl` を実行して既存の safetensors を置き換えてください。
+
+#### イメージのビルド & プッシュ
+```bash
+uv run python ci_push.py \
+  --repo SNOWFLAKE_LEARNING_DB.DATA_TEST.DOC_TOOLS \
+  --image paddleocrvl --tag latest \
+  --dockerfile dockerfile.paddleocrvl \
+  --context . \
+  --build \
+  --put-spec --spec-path specs/paddleocrvl.yaml \
+  --stage @DOC_STAGE --spec-dest specs/paddleocrvl.yaml \
+  --connection YOUR_CONNECTION
+```
+- `dockerfile.paddleocrvl` は Docker Hub で入手できる `paddlepaddle/paddle:3.2.2-gpu-cuda12.9-cudnn9.9` をベースにしています。公式 Paddle チームも Docker Hub の `paddlepaddle/paddle` を推奨しているため、日本からでも pull できます。citeturn1search8
+
+#### ジョブ実行
+```bash
+uv run python ci_spcs.py job \
+  --pool <GPU_POOL_NAME> \
+  --stage @DOC_STAGE \
+  --spec specs/paddleocrvl.yaml \
+  --database SNOWFLAKE_LEARNING_DB \
+  --schema DATA_TEST \
+  --connection YOUR_CONNECTION \
+  --sync
+```
+- ジョブ終了後、`@DOC_STAGE/paddleocrvl/out/paddleocrvl_output.parquet` に `source_path`, `page_count`, `markdown`, `page_markdown`, `model_name`, `generated_at`, `error`, `source_md5` などがまとまります。Markdown 実体は `@DOC_STAGE/paddleocrvl/workspace/markdown/` に入力パスを保ったまま生成され、画像や式レンダリングも Markdown と同じディレクトリ階層へ保存されます。
+- 主要な環境変数は spec で上書きできます。例: `PADDLEOCRVL_MIN_PIXELS` / `MAX_PIXELS` で入力リサイズ範囲を調整、`PADDLEOCRVL_TEMPERATURE` / `TOP_P` で生成挙動を制御、`PADDLEOCRVL_DISABLE_LAYOUT_DETECTION=1` で高速化、`PADDLEOCRVL_MARKDOWN_SUBDIR` でワークスペースの保存フォルダを変更。`PADDLEOCRVL_PADDLEX_HOME` には `.paddlex` 直下を指すパスを指定してください。
+- PaddleOCR-VL は GPU 前提のため、Compute Pool には `nvidia.com/gpu: 1` を割り当てる構成にしています。CPU のみで強制実行したい場合は `PADDLEOCRVL_DISABLE_LAYOUT_DETECTION=1` をセットしてレイアウト検出をスキップするなど、推論負荷を減らす工夫が必要です（それでも処理時間は大きく延びます）。
+
 ## 開発メモ
 - `dockerfile` は `ja_JP.UTF-8` ロケールと Noto CJK フォントを設定しているので日本語文書でも文字化けしにくい
 - LibreOffice CLI での変換が失敗した際はログにフィルター名などが出力されます

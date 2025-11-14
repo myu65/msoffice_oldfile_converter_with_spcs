@@ -1,0 +1,35 @@
+FROM paddlepaddle/paddle:3.2.2-gpu-cuda12.9-cudnn9.9
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      poppler-utils \
+      fonts-noto-cjk && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN python3 -m pip install --upgrade pip && \
+    python3 -m pip install --no-cache-dir \
+      "paddleocr[doc]==3.3.2" \
+      "paddlex[ocr]==3.3.9" \
+      pyarrow==16.1.0 && \
+    python3 -m pip install --no-cache-dir \
+      https://paddle-whl.bj.bcebos.com/nightly/cu126/safetensors/safetensors-0.6.2.dev0-cp38-abi3-linux_x86_64.whl
+
+ENV PADDLEOCRVL_INPUT_DIR=/in \
+    PADDLEOCRVL_OUTPUT_DIR=/out \
+    PADDLEOCRVL_WORKSPACE_DIR=/workspace \
+    PADDLEOCRVL_PARQUET_NAME=paddleocrvl_output.parquet \
+    PADDLEOCRVL_EMIT_MARKDOWN=1 \
+    PADDLEX_HOME=/models/.paddlex
+
+RUN mkdir -p /in /out /workspace /models "${PADDLEX_HOME}"
+
+COPY paddleocrvl_pipeline.py /usr/local/bin/paddleocrvl_pipeline.py
+COPY paddleocrvl_entrypoint.sh /usr/local/bin/paddleocrvl_entrypoint.sh
+
+RUN chmod +x /usr/local/bin/paddleocrvl_entrypoint.sh
+
+ENTRYPOINT ["/usr/local/bin/paddleocrvl_entrypoint.sh"]
