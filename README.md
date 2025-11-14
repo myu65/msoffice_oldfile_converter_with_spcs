@@ -179,6 +179,7 @@ GPU を含む Compute Pool で [alleninstituteforai/olmocr](https://hub.docker.c
     --stage @DOC_MODEL_STAGE/olmocr \
     --connection YOUR_CONNECTION
   ```
+- `--model` フラグは複数回指定できるので、複数の Hugging Face リポジトリを一括でステージへ PUT したい場合にも対応できます
 - 既に展開済みのディレクトリを使う場合は `--local-dir /path/to/dir` を指定
 - Stage 上では `@DOC_MODEL_STAGE/olmocr/<モデル名>/...` の形で配置され、spec の `OCR_MODEL_SUBDIR` と連動します
   - ローカルにダウンロードだけ行いたい場合は `--no-upload` を付けると Snowflake への PUT をスキップできます（`--skip-download` で既存ディレクトリをそのまま使うことも可能）
@@ -271,6 +272,59 @@ docker run --rm --gpus all \
 WSL2 などで GPU を渡す場合は `/usr/lib/wsl/lib` にある CUDA ドライバを優先するようエントリポイントが `LD_LIBRARY_PATH` を自動調整します。値を上書きする場合も同ディレクトリを含めてください。
 # End Patch
 GPU を検出できない環境（例: WSL 上で NVIDIA ドライバ未設定）では `-e OCR_DEVICE=cpu` を追加すると CPU モードで起動しますが、推論時間が大幅に延びる点に注意してください。
+
+### YomiToku Document OCR (新規)
+
+[kotaro-kinoshita/yomitoku](https://github.com/kotaro-kinoshita/yomitoku) をベースにした日本語向け Document AI/OCR の SPCS ジョブです。文字検出・認識・レイアウト・表構造の 4 モデルをローカルキャッシュから読み込み、PDF や画像を Markdown/HTML/JSON 等に変換します。
+
+#### モデルのステージ配置
+- 4 つの Hugging Face リポジトリをまとめて `@DOC_MODEL_STAGE/yomitoku/` 配下へ PUT します
+  ```bash
+  export HF_TOKEN=...  # 必要に応じて
+  uv run python ci_ocr_model.py \
+    --stage @DOC_MODEL_STAGE/yomitoku \
+    --connection YOUR_CONNECTION \
+    --model KotaroKinoshita/yomitoku-text-detector-dbnet-v2 \
+    --model KotaroKinoshita/yomitoku-text-recognizer-parseq-middle-v2 \
+    --model KotaroKinoshita/yomitoku-layout-parser-rtdtrv2-v2 \
+    --model KotaroKinoshita/yomitoku-table-structure-recognizer-rtdtrv2-open-beta
+  ```
+  それぞれ `@DOC_MODEL_STAGE/yomitoku/<リポジトリ名>/...` というディレクトリ構造で配置され、spec の `YOMITOKU_*_SUBDIR` 環境変数と一致させます。
+
+#### ステージ構成
+- `@DOC_STAGE/yomitoku/in/` : 入力 PDF / 画像（`pdf/png/jpg/jpeg/bmp/tif/tiff`）
+- `@DOC_STAGE/yomitoku/out/` : `yomitoku` CLI の出力（デフォルトは Markdown / ページ単位ファイル）
+- `@DOC_STAGE/yomitoku/workspace/` : 中間成果物（figure 可視化、生成した一時 config など）
+- `@DOC_MODEL_STAGE/yomitoku/` : Hugging Face スナップショットを展開したモデル郡
+
+#### イメージのビルド & プッシュ
+```bash
+uv run python ci_push.py \
+  --repo SNOWFLAKE_LEARNING_DB.DATA_TEST.DOC_TOOLS \
+  --image yomitoku --tag latest \
+  --dockerfile dockerfile.yomitoku \
+  --context . \
+  --build \
+  --put-spec --spec-path specs/yomitoku.yaml \
+  --stage @DOC_STAGE --spec-dest specs/yomitoku.yaml \
+  --connection YOUR_CONNECTION
+```
+
+#### ジョブ実行
+```bash
+uv run python ci_spcs.py job \
+  --pool <GPU_POOL_NAME> \
+  --stage @DOC_STAGE \
+  --spec specs/yomitoku.yaml \
+  --database SNOWFLAKE_LEARNING_DB \
+  --schema DATA_TEST \
+  --connection YOUR_CONNECTION \
+  --sync
+```
+- デフォルトでは Markdown (`YOMITOKU_FORMAT=md`) + ページ統合 (`YOMITOKU_COMBINE=1`) + 図抽出 (`YOMITOKU_FIGURE=1`) を有効化しています。JSON/HTML/PDF に切り替えたい場合は spec か `ci_spcs.py job --spec` 実行時に環境変数を上書きしてください。
+- `YOMITOKU_DEVICE=auto` で GPU を自動検出します。CPU のみで動かす場合は `YOMITOKU_DEVICE=cpu`。
+- 追加の CLI オプションは `YOMITOKU_EXTRA_ARGS`（例: `"--pages 1-3 --ignore_meta"`）に半角スペース区切りで渡せます。
+- 生成された Markdown/HTML/JSON は `@DOC_STAGE/yomitoku/out/`、図や可視化画像は `@DOC_STAGE/yomitoku/workspace/figures/` に保存されます。ログ取得時は `ci_spcs.py logs --container yomitoku ...` を指定してください。
 
 ## 開発メモ
 - `dockerfile` は `ja_JP.UTF-8` ロケールと Noto CJK フォントを設定しているので日本語文書でも文字化けしにくい

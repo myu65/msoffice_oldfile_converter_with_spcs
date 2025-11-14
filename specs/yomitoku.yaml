@@ -1,0 +1,47 @@
+spec:
+  containers:
+    - name: yomitoku
+      image: xvralmc-ux32060.registry.snowflakecomputing.com/snowflake_learning_db/data_test/doc_tools/yomitoku:latest
+      env:
+        HF_HUB_OFFLINE: "1"
+        TRANSFORMERS_OFFLINE: "1"
+        YOMITOKU_TEXT_DETECTOR_SUBDIR: "yomitoku-text-detector-dbnet-v2"
+        YOMITOKU_TEXT_RECOGNIZER_SUBDIR: "yomitoku-text-recognizer-parseq-middle-v2"
+        YOMITOKU_LAYOUT_PARSER_SUBDIR: "yomitoku-layout-parser-rtdtrv2-v2"
+        YOMITOKU_TABLE_RECOGNIZER_SUBDIR: "yomitoku-table-structure-recognizer-rtdtrv2-open-beta"
+        YOMITOKU_FORMAT: "md"
+        YOMITOKU_COMBINE: "1"
+        YOMITOKU_FIGURE: "1"
+        YOMITOKU_FIGURE_LETTER: "0"
+        YOMITOKU_DEVICE: "auto"
+        YOMITOKU_FIGURE_DIR: "/workspace/figures"
+        YOMITOKU_VIS: "0"
+        YOMITOKU_LITE: "0"
+        YOMITOKU_IGNORE_LINE_BREAK: "0"
+        YOMITOKU_IGNORE_META: "0"
+      volumeMounts:
+        - name: inputs
+          mountPath: /in
+        - name: outputs
+          mountPath: /out
+        - name: workspace
+          mountPath: /workspace
+        - name: models
+          mountPath: /models
+      resources:
+        requests:
+          cpu: 6
+          memory: 26Gi
+          nvidia.com/gpu: 1
+        limits:
+          nvidia.com/gpu: 1
+
+  volumes:
+    - name: inputs
+      source: "@DOC_STAGE/yomitoku/in"
+    - name: outputs
+      source: "@DOC_STAGE/yomitoku/out"
+    - name: workspace
+      source: "@DOC_STAGE/yomitoku/workspace"
+    - name: models
+      source: "@DOC_MODEL_STAGE/yomitoku"
