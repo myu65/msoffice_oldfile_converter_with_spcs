@@ -347,6 +347,7 @@ uv run python ci_spcs.py job \
 - 手動で取得したい場合は次の通り `PADDLEX_HOME` を設定し、`paddleocr.PaddleOCRVL` を一度呼び出してから `.paddlex` ディレクトリをステージへ PUT すれば同じ構成になります。
   ```bash
   export PADDLEX_HOME="$(pwd)/models/paddlex_home/.paddlex"
+  export PADDLE_PDX_CACHE_HOME="${PADDLEX_HOME}"
   mkdir -p "${PADDLEX_HOME}"
   python3 - <<'PY'
 from paddleocr import PaddleOCRVL
@@ -361,8 +362,8 @@ PY
 - `@DOC_STAGE/paddleocrvl/workspace/markdown/` : 結合済み Markdown (`入力相対パス + .md`)
 - `@DOC_STAGE/paddleocrvl/out/paddleocrvl_output.parquet` : 1 行 1 ファイルのメタデータ
 - `@DOC_MODEL_STAGE/paddleocrvl/.paddlex/official_models/...` : PaddleOCR-VL の各サブモデル
-- `.paddlex` 直下には `official_models/` だけでなく `pipelines/PaddleOCR-VL/*.yaml` などの設定ファイルも必要です。`ci_paddleocrvl_models.py` は `.paddlex` 丸ごとを PUT するので、既存 Stage に Official Models だけをコピーした場合は再アップロードしてください。
-- エントリポイントは `/models/.paddlex` 内を検証し、`PP-DocLayoutV2`（レイアウト検出モデル）やパイプライン設定が見つからない場合には即終了します。`PADDLEOCRVL_DISABLE_LAYOUT_DETECTION=1` を明示しない限り、Stage が欠けているまま処理を進めることはありません。
+- `.paddlex` 直下には `official_models/PP-DocLayoutV2/`（レイアウト検出）と `official_models/PaddleOCR-VL/`（本体 VLM）の両方が揃っている必要があります。`ci_paddleocrvl_models.py` は `.paddlex` 丸ごとを PUT するので、既存 Stage に一部だけコピーしていた場合は再アップロードしてください。PaddleX は実際には `PADDLE_PDX_CACHE_HOME` を見るので、ジョブ実行時は `/models/.paddlex` がそのまま cache home になるようエントリポイントで上書きしています。
+- エントリポイントは `/models/.paddlex` 内を検証し、`PP-DocLayoutV2` や `PaddleOCR-VL` のパラメータが見つからない場合には即終了します。`PADDLEOCRVL_DISABLE_LAYOUT_DETECTION=1` を明示しない限り、Stage が欠けているまま処理を進めることはありません。
 - safetensors の公式リリースには Paddle 用 backend がまだ含まれていないため、Dockerfile では Baidu 提供の `safetensors-0.6.2.dev0-cp38-abi3-linux_x86_64.whl` を追加でインストールしています。ローカル検証でも同じホイールを入れるか、`pip install -U https://paddle-whl.bj.bcebos.com/nightly/cu126/safetensors/safetensors-0.6.2.dev0-cp38-abi3-linux_x86_64.whl` を実行して既存の safetensors を置き換えてください。
 
 #### イメージのビルド & プッシュ

@@ -145,6 +145,7 @@ def warm_paddleocr_models(
 
     requested_paddlex_home.mkdir(parents=True, exist_ok=True)
     os.environ["PADDLEX_HOME"] = str(requested_paddlex_home)
+    os.environ["PADDLE_PDX_CACHE_HOME"] = str(requested_paddlex_home)
 
     sample_path = create_sample_image(width, height, sample_text)
     try:

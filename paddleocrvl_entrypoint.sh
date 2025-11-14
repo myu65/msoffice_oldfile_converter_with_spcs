@@ -28,6 +28,7 @@ VERBOSE="${PADDLEOCRVL_VERBOSE:-0}"
 
 DEFAULT_PADDLEX_HOME="${PADDLEOCRVL_PADDLEX_HOME:-/models/.paddlex}"
 export PADDLEX_HOME="${PADDLEX_HOME:-${DEFAULT_PADDLEX_HOME}}"
+export PADDLE_PDX_CACHE_HOME="${PADDLE_PDX_CACHE_HOME:-${PADDLEX_HOME}}"
 mkdir -p "${PADDLEX_HOME}"
 
 export FLAGS_allocator_strategy="${FLAGS_allocator_strategy:-auto_growth}"
@@ -49,13 +50,16 @@ check_models() {
     echo "[ERROR] ${required_dir} is empty. Ensure PaddleOCR-VL official models are staged." >&2
     exit 42
   fi
-  local pipelines_dir="${PADDLEX_HOME}/pipelines"
-  if [ ! -d "${pipelines_dir}" ]; then
-    echo "[ERROR] Missing ${pipelines_dir}. Upload the full .paddlex tree (pipelines + official_models)." >&2
+  local vl_model_dir="${PADDLEX_HOME}/official_models/PaddleOCR-VL"
+  if [ ! -d "${vl_model_dir}" ]; then
+    cat >&2 <<EOF
+[ERROR] PaddleOCR-VL weights not found at ${vl_model_dir}.
+       Run ci_paddleocrvl_models.py to download PaddleOCR-VL-0.9B and upload it to the stage.
+EOF
     exit 42
   fi
-  if ! find "${pipelines_dir}" -type f -print -quit | grep -q .; then
-    echo "[ERROR] ${pipelines_dir} has no pipeline descriptors. Re-run ci_paddleocrvl_models.py --stage ... to regenerate." >&2
+  if ! find "${vl_model_dir}" -type f \( -name '*.safetensors' -o -name '*.pdiparams*' \) -print -quit | grep -q .; then
+    echo "[ERROR] ${vl_model_dir} exists but has no parameter files. Re-upload PaddleOCR-VL models." >&2
     exit 42
   fi
   local doc_layout_dir="${PADDLEX_HOME}/official_models/PP-DocLayoutV2"
