@@ -9,11 +9,17 @@ LightOnOCR, and emits a Parquet file with one row per source document.
 
 The output Parquet schema:
   - source_path (str): path relative to the input root
+  - source_md5 (str or null)
+  - source_size_bytes (int or null)
+  - source_modified_at (str or null, ISO-8601 UTC)
+  - source_changed_at (str or null, ISO-8601 UTC)
+  - source_accessed_at (str or null, ISO-8601 UTC)
   - page_count (int)
   - markdown (str): concatenated Markdown for the whole document
   - page_markdown (list[str]): Markdown per page (index aligned to PDF pages)
   - model_name (str)
   - generated_at (str, ISO-8601 UTC timestamp)
+  - error (str or null)
 
 Optionally dumps individual Markdown files to a workspace directory for
 inspection. The script expects the model server to run locally (see
@@ -24,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
 import io
 import json
 import logging
@@ -92,11 +99,86 @@ def list_pdf_files(root: Path) -> List[Path]:
     return files
 
 
+def compute_md5(path: Path, chunk_size: int = 1 << 20) -> str | None:
+    """
+    Compute the hexadecimal MD5 digest for the given file.
+    Returns None if the file cannot be read.
+    """
+    digest = hashlib.md5()
+    try:
+        with path.open("rb") as handle:
+            while True:
+                chunk = handle.read(chunk_size)
+                if not chunk:
+                    break
+                digest.update(chunk)
+    except OSError as exc:
+        LOGGER.warning("Unable to hash %s: %s", path, exc)
+        return None
+    return digest.hexdigest()
+
+
+def ts_to_iso(timestamp: float | None) -> str | None:
+    if timestamp is None:
+        return None
+    return datetime.fromtimestamp(timestamp, tz=timezone.utc).isoformat()
+
+
+def collect_file_metadata(path: Path) -> dict:
+    """
+    Gather filesystem metadata for the source file.
+    """
+    metadata: dict[str, object | None] = {
+        "source_md5": None,
+        "source_size_bytes": None,
+        "source_modified_at": None,
+        "source_changed_at": None,
+        "source_accessed_at": None,
+    }
+
+    try:
+        stat = path.stat()
+    except OSError as exc:
+        LOGGER.warning("Unable to stat %s: %s", path, exc)
+        return metadata
+
+    metadata["source_size_bytes"] = stat.st_size
+    metadata["source_modified_at"] = ts_to_iso(getattr(stat, "st_mtime", None))
+    metadata["source_changed_at"] = ts_to_iso(getattr(stat, "st_ctime", None))
+    metadata["source_accessed_at"] = ts_to_iso(getattr(stat, "st_atime", None))
+    metadata["source_md5"] = compute_md5(path)
+    return metadata
+
+
 def render_page_to_base64(page, scale: float) -> str:
     """
     Render a PdfDocument page to PNG (base64 encoded).
     """
-    pil_image = page.render_topil(scale=scale)
+    pil_image = None
+    if hasattr(page, "render_topil"):
+        pil_image = page.render_topil(scale=scale)
+    if pil_image is None:
+        try:
+            bitmap = page.render(scale=scale, rev_byteorder=True)
+        except TypeError:
+            bitmap = page.render(scale=scale)
+        try:
+            if hasattr(bitmap, "to_pil"):
+                pil_image = bitmap.to_pil()
+            elif hasattr(bitmap, "to_png"):
+                png_bytes = bitmap.to_png()
+                return base64.b64encode(png_bytes).decode("utf-8")
+            else:  # pragma: no cover - unexpected API variant
+                raise TypeError(f"Unsupported PdfBitmap conversion methods: {dir(bitmap)}")
+        finally:
+            if hasattr(bitmap, "close"):
+                bitmap.close()
+
+    if isinstance(pil_image, tuple):
+        pil_image = pil_image[0]
+    if pil_image is None or not hasattr(pil_image, "save"):
+        raise TypeError(f"Unexpected render output type: {type(pil_image)!r}")
+
     with io.BytesIO() as buf:
         pil_image.save(buf, format="PNG")
         return base64.b64encode(buf.getvalue()).decode("utf-8")
@@ -110,16 +192,11 @@ def build_payload(config: OCRConfig, image_b64: str, page_index: int, page_total
     return {
         "model": config.model_name,
         "messages": [
-            {
-                "role": "system",
-                "content": [
-                    {"type": "input_text", "text": config.system_prompt},
-                ],
-            },
+            {"role": "system", "content": config.system_prompt},
             {
                 "role": "user",
                 "content": [
-                    {"type": "input_text", "text": user_prompt},
+                    {"type": "text", "text": user_prompt},
                     {
                         "type": "image_url",
                         "image_url": {"url": f"data:image/png;base64,{image_b64}"},
@@ -128,6 +205,7 @@ def build_payload(config: OCRConfig, image_b64: str, page_index: int, page_total
             },
         ],
         "max_output_tokens": config.max_output_tokens,
+        "max_tokens": config.max_output_tokens,
         "temperature": config.temperature,
         "top_p": config.top_p,
     }
@@ -336,6 +414,7 @@ def main() -> int:
     for pdf_path in pdf_files:
         rel_path = pdf_path.relative_to(input_root)
         LOGGER.info("Processing %s", rel_path)
+        file_meta = collect_file_metadata(pdf_path)
         try:
             page_markdowns = ocr_pdf(
                 session,
@@ -346,17 +425,17 @@ def main() -> int:
             )
         except Exception as exc:
             LOGGER.error("Failed to OCR %s: %s", rel_path, exc)
-            records.append(
-                {
-                    "source_path": str(rel_path),
-                    "page_count": 0,
-                    "markdown": "",
-                    "page_markdown": [],
-                    "model_name": config.model_name,
-                    "generated_at": generated_at,
-                    "error": str(exc),
-                }
-            )
+            failure_record = {
+                "source_path": str(rel_path),
+                "page_count": 0,
+                "markdown": "",
+                "page_markdown": [],
+                "model_name": config.model_name,
+                "generated_at": generated_at,
+                "error": str(exc),
+            }
+            failure_record.update(file_meta)
+            records.append(failure_record)
             continue
 
         combined_markdown = "\n\n".join(
@@ -369,16 +448,17 @@ def main() -> int:
             markdown_path = markdown_root / rel_path.with_suffix(".md")
             write_markdown_file(markdown_path, combined_markdown)
 
-        records.append(
-            {
-                "source_path": str(rel_path),
-                "page_count": len(page_markdowns),
-                "markdown": combined_markdown,
-                "page_markdown": page_markdowns,
-                "model_name": config.model_name,
-                "generated_at": generated_at,
-            }
-        )
+        success_record = {
+            "source_path": str(rel_path),
+            "page_count": len(page_markdowns),
+            "markdown": combined_markdown,
+            "page_markdown": page_markdowns,
+            "model_name": config.model_name,
+            "generated_at": generated_at,
+            "error": None,
+        }
+        success_record.update(file_meta)
+        records.append(success_record)
 
     parquet_path = output_root / args.parquet_name
     write_parquet(parquet_path, records)

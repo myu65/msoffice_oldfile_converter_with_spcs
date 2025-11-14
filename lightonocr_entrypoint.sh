@@ -6,6 +6,7 @@ OUTPUT_ROOT="${OCR_OUTPUT_DIR:-/out}"
 WORKSPACE_ROOT="${OCR_WORKSPACE_DIR:-/workspace}"
 MODEL_ROOT="${OCR_MODEL_DIR:-/models}"
 MODEL_SUBDIR="${OCR_MODEL_SUBDIR:-LightOnOCR-1B-1025}"
+SERVED_MODEL_NAME="${OCR_SERVED_MODEL_NAME:-${MODEL_SUBDIR}}"
 
 
 PORT="${OCR_SERVER_PORT:-8000}"
@@ -49,17 +50,60 @@ detect_gpu() {
   return 1
 }
 
+gpu_count() {
+  if ! command -v nvidia-smi >/dev/null 2>&1; then
+    echo 0
+    return
+  fi
+  local count
+  if count=$(nvidia-smi -L 2>/dev/null | grep -c '^GPU '); then
+    echo "${count}"
+  else
+    echo 0
+  fi
+}
+
+if ! [[ "${TENSOR_PARALLEL}" =~ ^[0-9]+$ ]]; then
+  echo "[WARN] Non-numeric OCR_TENSOR_PARALLEL='${TENSOR_PARALLEL}'; defaulting to 1." >&2
+  TENSOR_PARALLEL=1
+fi
+TENSOR_PARALLEL=$(( TENSOR_PARALLEL ))
+if (( TENSOR_PARALLEL < 1 )); then
+  echo "[WARN] OCR_TENSOR_PARALLEL (${TENSOR_PARALLEL}) < 1; defaulting to 1." >&2
+  TENSOR_PARALLEL=1
+fi
+
+GPU_COUNT=0
 if [ "${REQUESTED_DEVICE}" = "cpu" ]; then
   echo "[INFO] OCR_DEVICE=cpu specified. Forcing CPU execution." >&2
   export CUDA_VISIBLE_DEVICES=""
   DEVICE_FLAG=(--device cpu)
 elif detect_gpu; then
-  echo "[INFO] GPU detected. Using default device configuration." >&2
-  DEVICE_FLAG=()
+  GPU_COUNT=$(gpu_count)
+  if (( GPU_COUNT > 0 )); then
+    echo "[INFO] GPU detected. Using default device configuration." >&2
+    DEVICE_FLAG=()
+  else
+    echo "[WARN] GPU detection succeeded but no devices were enumerated; falling back to CPU mode." >&2
+    export CUDA_VISIBLE_DEVICES=""
+    DEVICE_FLAG=(--device cpu)
+  fi
 else
   echo "[WARN] GPU not detected; falling back to CPU mode. Set OCR_DEVICE=cpu explicitly to suppress this warning." >&2
   export CUDA_VISIBLE_DEVICES=""
   DEVICE_FLAG=(--device cpu)
+fi
+
+if (( GPU_COUNT > 0 )); then
+  if (( TENSOR_PARALLEL > GPU_COUNT )); then
+    echo "[WARN] OCR_TENSOR_PARALLEL (${TENSOR_PARALLEL}) exceeds available GPUs (${GPU_COUNT}); reducing to ${GPU_COUNT}." >&2
+    TENSOR_PARALLEL=${GPU_COUNT}
+  fi
+else
+  if (( TENSOR_PARALLEL > 1 )); then
+    echo "[WARN] No GPUs available; forcing OCR_TENSOR_PARALLEL to 1 for CPU execution." >&2
+  fi
+  TENSOR_PARALLEL=1
 fi
 
 mkdir -p "${WORKSPACE_ROOT}" "${OUTPUT_ROOT}"
@@ -80,6 +124,10 @@ vllm_cmd=(
   --trust-remote-code
   "${DEVICE_FLAG[@]}"
 )
+
+if [ -n "${SERVED_MODEL_NAME}" ]; then
+  vllm_cmd+=(--served-model-name "${SERVED_MODEL_NAME}")
+fi
 
 if [ -n "${EXTRA_ARGS}" ]; then
   # shellcheck disable=SC2206
