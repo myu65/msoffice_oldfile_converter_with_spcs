@@ -1,0 +1,41 @@
+FROM paddlepaddle/paddle:3.2.2-gpu-cuda12.9-cudnn9.9
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      poppler-utils \
+      fonts-noto-cjk && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN python3 -m pip install --upgrade pip && \
+    python3 -m pip install --no-cache-dir \
+      "paddleocr[doc]==3.3.2" \
+      "paddlex[ocr]==3.3.9" \
+      pyarrow==16.1.0 \
+      pypdfium2==4.30.0
+
+ENV PADDLEOCRLAYOUT_INPUT_DIR=/in \
+    PADDLEOCRLAYOUT_OUTPUT_DIR=/out \
+    PADDLEOCRLAYOUT_WORKSPACE_DIR=/workspace \
+    PADDLEOCRLAYOUT_PARQUET_NAME=paddleocrlayout_output.parquet \
+    PADDLEOCRLAYOUT_EMIT_JSON=1 \
+    PADDLEOCRLAYOUT_JSON_SUBDIR=layout_json \
+    PADDLEOCRLAYOUT_MODEL_NAME=PP-DocLayout_plus-L \
+    PADDLEOCRLAYOUT_PIPELINE_NAME=PaddleOCR-Layout \
+    PADDLEOCRLAYOUT_STRUCTURE_VERSION=PP-StructureV3 \
+    PADDLEOCRLAYOUT_LAYOUT_MODEL_NAME=PP-DocLayout_plus-L \
+    PADDLEOCRLAYOUT_PAGE_SCALE=1.5 \
+    PADDLEOCRLAYOUT_PADDLEX_HOME=/models/.paddlex
+
+RUN mkdir -p /in /out /workspace /models "${PADDLEOCRLAYOUT_PADDLEX_HOME}"
+
+COPY paddleocrlayout_pipeline.py /usr/local/bin/paddleocrlayout_pipeline.py
+COPY paddleocrlayout_entrypoint.sh /usr/local/bin/paddleocrlayout_entrypoint.sh
+
+RUN chmod +x /usr/local/bin/paddleocrlayout_entrypoint.sh
+
+ENTRYPOINT ["/usr/local/bin/paddleocrlayout_entrypoint.sh"]
+

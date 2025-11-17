@@ -401,3 +401,50 @@ uv run python ci_spcs.py job \
 - Calc PDF を UNO で吐き出す際は既存の改ページや印刷範囲を尊重します
 
 公開用に調整しているので、追加の改善や要望があれば Issue/PR へどうぞ。
+
+## PaddleOCR Markdown / Layout パイプライン
+
+PaddleOCR 系のジョブは 2 系統を同梱しています。VL は Visual Language モデルで Markdown を生成する構成、Layout は PP-Structure (DocLayout Plus) ベースでブロック検出に特化した構成です。
+
+- `dockerfile.paddleocrvl` + `paddleocrvl_entrypoint.sh` + `paddleocrvl_pipeline.py`
+  - 0.9B VLM で Markdown を生成。
+  - モデル配布用ウォーマー: `ci_paddleocrvl_models.py`
+  - spec: `specs/paddleocrvl.yaml`
+- `dockerfile.paddleocrlayout` + `paddleocrlayout_entrypoint.sh` + `paddleocrlayout_pipeline.py`
+  - `PP-DocLayout_plus-L` など最新 Layout モデルを使い bbox/label を取得し Parquet/JSON 化。
+  - モデル配布用ウォーマー: `ci_paddleocrlayout_models.py`
+  - spec: `specs/paddleocrlayout.yaml`
+
+どちらも `.paddlex/official_models` を Snowflake モデルステージに置いて `/models/.paddlex` へマウントする運用です。Layout 版は `@DOC_MODEL_STAGE/paddleocrlayout` を初期値にし、VL と別ステージ配下にして衝突を避けています。必要に応じて `PADDLEX_HOME` や `*_MODEL_SUBDIR` を環境変数で上書きしてください。
+
+### Layout 版の実行フロー例
+
+```bash
+# 1) モデルをダウンロード＆ステージへ PUT
+uv run python ci_paddleocrlayout_models.py \
+  --stage @DOC_MODEL_STAGE/paddleocrlayout \
+  --connection YOUR_CONNECTION
+
+# 2) イメージを build/push + spec PUT
+uv run python ci_push.py \
+  --repo SNOWFLAKE_LEARNING_DB.DATA_TEST.DOC_TOOLS \
+  --image paddleocrlayout --tag latest \
+  --dockerfile dockerfile.paddleocrlayout \
+  --context . \
+  --build \
+  --put-spec --spec-path specs/paddleocrlayout.yaml \
+  --stage @DOC_STAGE --spec-dest specs/paddleocrlayout.yaml \
+  --connection YOUR_CONNECTION
+
+# 3) SPCS ジョブ実行
+uv run python ci_spcs.py job \
+  --pool <GPU_POOL_NAME> \
+  --stage @DOC_STAGE \
+  --spec specs/paddleocrlayout.yaml \
+  --database SNOWFLAKE_LEARNING_DB \
+  --schema DATA_TEST \
+  --connection YOUR_CONNECTION \
+  --sync
+```
+
+Layout Parquet には `layout` (ページ配列) / `block_count` / `structure_version` / `layout_model_name` などを格納し、`PADDLEOCRLAYOUT_EMIT_JSON=1` なら `/workspace/layout_json/...` にも JSON を落とします。VL と併用すれば、Markdown 生成が難しい資料でも Layout 情報を下流処理に利用できます。

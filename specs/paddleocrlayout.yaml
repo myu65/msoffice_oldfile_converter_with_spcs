@@ -1,0 +1,51 @@
+spec:
+  containers:
+    - name: paddleocrlayout
+      image: xvralmc-ux32060.registry.snowflakecomputing.com/snowflake_learning_db/data_test/doc_tools/paddleocrlayout:latest
+      env:
+        PADDLEOCRLAYOUT_INPUT_DIR: "/in"
+        PADDLEOCRLAYOUT_OUTPUT_DIR: "/out"
+        PADDLEOCRLAYOUT_WORKSPACE_DIR: "/workspace"
+        PADDLEOCRLAYOUT_PARQUET_NAME: "paddleocrlayout_output.parquet"
+        PADDLEOCRLAYOUT_EMIT_JSON: "1"
+        PADDLEOCRLAYOUT_JSON_SUBDIR: "layout_json"
+        PADDLEOCRLAYOUT_MODEL_NAME: "PP-DocLayout_plus-L"
+        PADDLEOCRLAYOUT_PIPELINE_NAME: "PaddleOCR-Layout"
+        PADDLEOCRLAYOUT_STRUCTURE_VERSION: "PP-StructureV3"
+        PADDLEOCRLAYOUT_LAYOUT_MODEL_NAME: "PP-DocLayout_plus-L"
+        PADDLEOCRLAYOUT_LAYOUT_ALGORITHM: "PP-DocLayout_plus-L"
+        PADDLEOCRLAYOUT_PAGE_SCALE: "1.5"
+        PADDLEOCRLAYOUT_ENABLE_TABLE: "0"
+        PADDLEOCRLAYOUT_ENABLE_OCR: "0"
+        PADDLEOCRLAYOUT_ENABLE_KIE: "0"
+        PADDLEOCRLAYOUT_LANG: "en"
+        PADDLEOCRLAYOUT_VERBOSE: "0"
+        PADDLEOCRLAYOUT_PADDLEX_HOME: "/models/.paddlex"
+        PADDLEOCRLAYOUT_MODEL_SUBDIR: "PP-DocLayout_plus-L"
+      volumeMounts:
+        - name: inputs
+          mountPath: /in
+        - name: outputs
+          mountPath: /out
+        - name: workspace
+          mountPath: /workspace
+        - name: models
+          mountPath: /models
+      resources:
+        requests:
+          cpu: 8
+          memory: 32Gi
+          nvidia.com/gpu: 1
+        limits:
+          nvidia.com/gpu: 1
+
+  volumes:
+    - name: inputs
+      source: "@DOC_STAGE/yomitoku/in"
+    - name: outputs
+      source: "@DOC_STAGE/paddleocrlayout/out"
+    - name: workspace
+      source: "@DOC_STAGE/paddleocrlayout/workspace"
+    - name: models
+      source: "@DOC_MODEL_STAGE/paddleocrlayout"
+
